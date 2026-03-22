@@ -58,12 +58,20 @@ function isEnabled(pluginConfig: unknown, agentId?: unknown): boolean {
   return (pluginConfig as OuterLoopPluginConfig).enabled === true;
 }
 
+function clampMaxContinuations(value: number): number {
+  return Math.min(MAX_MAX_CONTINUATIONS, Math.max(MIN_MAX_CONTINUATIONS, Math.floor(value)));
+}
+
 function getMaxContinuations(pluginConfig: unknown, agentId?: unknown): number {
   const override = getAgentOverride(agentId);
-  if (typeof override?.maxContinuations === "number") return override.maxContinuations;
+  if (typeof override?.maxContinuations === "number" && Number.isFinite(override.maxContinuations)) {
+    return clampMaxContinuations(override.maxContinuations);
+  }
   if (!pluginConfig || typeof pluginConfig !== "object") return DEFAULT_MAX_CONTINUATIONS;
   const raw = (pluginConfig as OuterLoopPluginConfig).maxContinuations;
-  return typeof raw === "number" && Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : DEFAULT_MAX_CONTINUATIONS;
+  return typeof raw === "number" && Number.isFinite(raw)
+    ? clampMaxContinuations(raw)
+    : DEFAULT_MAX_CONTINUATIONS;
 }
 
 function extractLastAssistantText(messages: unknown[]): string {
@@ -189,7 +197,7 @@ async function sendCommandReply(api: OpenClawPluginApi, ctx: unknown, text: stri
 export default {
   id: "outer-loop",
   name: "Outer Loop",
-  description: "Experimental same-session continuation policy plugin.",
+  description: "Bounded same-session continuation policy plugin.",
   configSchema: {
     type: "object",
     additionalProperties: false,
