@@ -1,0 +1,17 @@
+{
+  "id": "outer-loop",
+  "name": "Outer Loop",
+  "description": "Experimental same-session continuation policy plugin.",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "enabled": {
+        "type": "boolean"
+      },
+      "maxContinuations": {
+        "type": "number"
+      }
+    }
+  }
+}

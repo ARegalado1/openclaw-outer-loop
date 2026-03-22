@@ -1,0 +1,11 @@
+{
+  "name": "@openclaw/outer-loop",
+  "version": "0.1.0",
+  "description": "Experimental same-session continuation policy plugin for OpenClaw",
+  "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
