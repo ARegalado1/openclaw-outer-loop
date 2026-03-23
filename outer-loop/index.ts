@@ -158,40 +158,14 @@ function formatStatus(pluginConfig: unknown, agentId: unknown, runtimeVisible: b
   ].join(" | ");
 }
 
-function parseOuterLoopCommand(text: string): { kind: "status" | "on" | "off" | "max"; value?: number } | null {
-  const trimmed = text.trim();
-  if (!trimmed) return null;
-  if (/^\/outerloop\s+status\s*$/i.test(trimmed)) return { kind: "status" };
-  if (/^\/outerloop\s+on\s*$/i.test(trimmed)) return { kind: "on" };
-  if (/^\/outerloop\s+off\s*$/i.test(trimmed)) return { kind: "off" };
-  const maxMatch = trimmed.match(/^\/outerloop\s+max\s+(\d+)\s*$/i);
+function parseOuterLoopArgs(args: string): { kind: "status" | "on" | "off" | "max"; value?: number } | null {
+  const trimmed = args.trim();
+  if (!trimmed || /^status$/i.test(trimmed)) return { kind: "status" };
+  if (/^on$/i.test(trimmed)) return { kind: "on" };
+  if (/^off$/i.test(trimmed)) return { kind: "off" };
+  const maxMatch = trimmed.match(/^max\s+(\d+)$/i);
   if (maxMatch) return { kind: "max", value: Number(maxMatch[1]) };
   return null;
-}
-
-async function sendCommandReply(api: OpenClawPluginApi, ctx: unknown, text: string): Promise<void> {
-  const anyCtx = ctx as any;
-  const channel = typeof anyCtx?.channel === "string" ? anyCtx.channel : "";
-  const to = typeof anyCtx?.chatId === "string" ? anyCtx.chatId : typeof anyCtx?.sessionKey === "string" ? anyCtx.sessionKey : "";
-  if (!text.trim()) return;
-
-  try {
-    if (channel === "telegram") {
-      const send = (api as any)?.runtime?.channel?.telegram?.sendMessageTelegram;
-      if (send && to) {
-        await send(to, text, {
-          ...(anyCtx?.messageThreadId != null ? { messageThreadId: anyCtx.messageThreadId } : {}),
-          ...(anyCtx?.accountId ? { accountId: anyCtx.accountId } : {}),
-          ...(anyCtx?.replyToMessageId ? { replyToMessageId: anyCtx.replyToMessageId } : {}),
-        });
-        return;
-      }
-    }
-  } catch (err) {
-    console.log("[outer-loop] command reply failed", { error: err instanceof Error ? err.message : String(err) });
-  }
-
-  console.log("[outer-loop] command reply fallback", { text, channel, to });
 }
 
 export default {
@@ -216,37 +190,49 @@ export default {
     console.log(`[outer-loop] runtime bridge visible=${Boolean(runtimeOuterLoopAtRegister)}`);
     console.log("[outer-loop] ================================================");
 
-    api.on("message_received", async (event, ctx) => {
-      const content = typeof (event as any)?.content === "string" ? (event as any).content : "";
-      const command = parseOuterLoopCommand(content);
-      if (!command) return;
-      const agentId = (ctx as any)?.agentId;
-      const runtimeVisible = Boolean((api as any)?.runtime?.outerLoop);
+    api.registerCommand({
+      name: "outerloop",
+      description: "Show or change outer-loop settings.",
+      acceptsArgs: true,
+      requireAuth: true,
+      handler: async (ctx) => {
+        const command = parseOuterLoopArgs(ctx.args?.trim() ?? "");
+        if (!command) {
+          return {
+            text: [
+              "Usage: /outerloop [status|on|off|max <1-10>]",
+              "Examples:",
+              "- /outerloop status",
+              "- /outerloop on",
+              "- /outerloop off",
+              "- /outerloop max 10",
+            ].join("\n"),
+          };
+        }
 
-      if (command.kind === "status") {
-        const status = formatStatus((api as any)?.pluginConfig, agentId, runtimeVisible);
-        console.log("[outer-loop] command status", { agentId, status });
-        await sendCommandReply(api, ctx, status);
-        return;
-      }
+        const agentId = ctx.config?.agent?.id;
+        const runtimeVisible = Boolean((api as any)?.runtime?.outerLoop);
 
-      if (command.kind === "on") {
-        const next = setAgentOverride(agentId, { enabled: true });
-        const message = `Outer loop enabled for agent ${normalizeAgentId(agentId) || "unknown"}.`;
-        console.log("[outer-loop] command on", { agentId, next, status: formatStatus((api as any)?.pluginConfig, agentId, runtimeVisible) });
-        await sendCommandReply(api, ctx, message);
-        return;
-      }
+        if (command.kind === "status") {
+          const status = formatStatus((api as any)?.pluginConfig, agentId, runtimeVisible);
+          console.log("[outer-loop] command status", { agentId, status });
+          return { text: status };
+        }
 
-      if (command.kind === "off") {
-        const next = setAgentOverride(agentId, { enabled: false });
-        const message = `Outer loop disabled for agent ${normalizeAgentId(agentId) || "unknown"}.`;
-        console.log("[outer-loop] command off", { agentId, next, status: formatStatus((api as any)?.pluginConfig, agentId, runtimeVisible) });
-        await sendCommandReply(api, ctx, message);
-        return;
-      }
+        if (command.kind === "on") {
+          const next = setAgentOverride(agentId, { enabled: true });
+          const message = `Outer loop enabled for agent ${normalizeAgentId(agentId) || "unknown"}.`;
+          console.log("[outer-loop] command on", { agentId, next, status: formatStatus((api as any)?.pluginConfig, agentId, runtimeVisible) });
+          return { text: message };
+        }
 
-      if (command.kind === "max") {
+        if (command.kind === "off") {
+          const next = setAgentOverride(agentId, { enabled: false });
+          const message = `Outer loop disabled for agent ${normalizeAgentId(agentId) || "unknown"}.`;
+          console.log("[outer-loop] command off", { agentId, next, status: formatStatus((api as any)?.pluginConfig, agentId, runtimeVisible) });
+          return { text: message };
+        }
+
         const value = command.value;
         if (typeof value !== "number" || !Number.isFinite(value) || value < MIN_MAX_CONTINUATIONS || value > MAX_MAX_CONTINUATIONS) {
           const message = `Max continuations must be between ${MIN_MAX_CONTINUATIONS} and ${MAX_MAX_CONTINUATIONS}.`;
@@ -255,15 +241,15 @@ export default {
             attempted: value,
             message,
           });
-          await sendCommandReply(api, ctx, message);
-          return;
+          return { text: message };
         }
+
         const nextValue = Math.floor(value);
         const next = setAgentOverride(agentId, { maxContinuations: nextValue });
         const message = `Max continuations set to ${nextValue} for agent ${normalizeAgentId(agentId) || "unknown"}.`;
         console.log("[outer-loop] command max", { agentId, next, status: formatStatus((api as any)?.pluginConfig, agentId, runtimeVisible) });
-        await sendCommandReply(api, ctx, message);
-      }
+        return { text: message };
+      },
     });
 
     api.on(

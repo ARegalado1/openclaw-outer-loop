@@ -263,6 +263,8 @@ Avoid or be cautious with:
 
 ### v0.1.1
 - transcript/internal tagging for continuation turns
+- fix startup banner bridge-visible timing so it reflects resolved runtime state instead of register-time state
+- fix `/outerloop status` agent scope resolution so it reports the actual agent ID instead of `unknown`
 
 ### later
 - better continuation semantics
