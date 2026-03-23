@@ -294,6 +294,7 @@ Avoid or be cautious with:
 - fix `/outerloop status` agent scope resolution so it reports the actual agent ID instead of `unknown`
 
 ### later
+- simpler installation UX, ideally moving toward a more fluid one-line or near-one-line install path once packaging/runtime integration is clean enough
 - better continuation semantics
 - improved compaction recovery if still needed after lossless context tooling
 - cleaner upstream packaging / PR path into OpenClaw core
