@@ -6,6 +6,33 @@ Autonomous same-session continuation for OpenClaw.
 
 This project adds a bounded outer-loop mechanism so an OpenClaw agent can continue work across multiple completed turns until the task is done or truly blocked, instead of stopping early and waiting for another human "go ahead" message.
 
+## TL;DR / Quick Reference
+
+Core commands:
+- `/outerloop status`
+- `/outerloop on`
+- `/outerloop off`
+- `/outerloop max <n>`
+
+Max continuation bounds:
+- minimum: `1`
+- maximum: `10`
+- default: `3`
+
+What it does:
+- lets an agent continue across completed turns in the same session
+- stops on completion, interruption, failure, repeated no-progress, or max continuations
+
+What you need for it to work:
+- the `outer-loop` plugin
+- the patched OpenClaw runtime shim
+
+Fast install shape:
+1. load/allow the plugin in OpenClaw config
+2. replace the matching installed runtime bundle file with the patched one
+3. restart OpenClaw
+4. run `/outerloop status`
+
 ## Status
 
 **Version:** `v0.1.0`
