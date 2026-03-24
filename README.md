@@ -1,14 +1,14 @@
 ```
   ╔═══════════════════════════════════════════════════════════╗
   ║                                                           ║
-  ║    ██████╗ ██╗   ██╗████████╗███████╗██████╗             ║
-  ║   ██╔═══██╗██║   ██║╚══██╔══╝██╔════╝██╔══██╗            ║
-  ║   ██║   ██║██║   ██║   ██║   █████╗  ██████╔╝            ║
-  ║   ██║   ██║██║   ██║   ██║   ██╔══╝  ██╔══██╗            ║
-  ║   ╚██████╔╝╚██████╔╝   ██║   ███████╗██║  ██║            ║
-  ║    ╚═════╝  ╚═════╝    ╚═╝   ╚══════╝╚═╝  ╚═╝            ║
+  ║    ██████╗ ██╗   ██╗████████╗███████╗██████╗              ║
+  ║   ██╔═══██╗██║   ██║╚══██╔══╝██╔════╝██╔══██╗             ║
+  ║   ██║   ██║██║   ██║   ██║   █████╗  ██████╔╝             ║
+  ║   ██║   ██║██║   ██║   ██║   ██╔══╝  ██╔══██╗             ║
+  ║   ╚██████╔╝╚██████╔╝   ██║   ███████╗██║  ██║             ║
+  ║    ╚═════╝  ╚═════╝    ╚═╝   ╚══════╝╚═╝  ╚═╝             ║
   ║                                                           ║
-  ║              L O O P                                      ║
+  ║                          L O O P                          ║
   ║   Autonomous same-session continuation for OpenClaw       ║
   ║                                                           ║
   ╚═══════════════════════════════════════════════════════════╝
@@ -16,14 +16,14 @@
 
 [![Version](https://img.shields.io/badge/version-0.1.1-blue.svg)](https://github.com/ARegalado1/openclaw-outer-loop/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
-[![OpenClaw](https://img.shields.io/badge/OpenClaw-3.13-orange.svg)](https://openclaw.ai)
+[![OpenClaw](https://img.shields.io/badge/OpenClaw-3.23--2-orange.svg)](https://openclaw.ai)
 [![Status](https://img.shields.io/badge/status-experimental-yellow.svg)]()
 
 ---
 
 # OpenClaw Outer Loop
 
-Plugin + runtime patch for OpenClaw 3.13.
+Plugin + runtime patch for OpenClaw 3.23-2.
 
 This project adds a bounded outer-loop mechanism so an OpenClaw agent can continue work across multiple completed turns until the task is done or truly blocked, instead of stopping early and waiting for another human "go ahead" message.
 
@@ -197,7 +197,7 @@ This allows any downstream session history reader to distinguish outer-loop-inje
 ## Compatibility
 
 Tested on:
-- **OpenClaw 3.13**
+- **OpenClaw 3.23-2**
 
 Important:
 - the runtime patch file name is bundled and version-specific
@@ -268,7 +268,7 @@ Then locate the installed OpenClaw dist bundle.
 
 ### 2. Identify the target runtime file
 
-For OpenClaw 3.13, the file used during this release was:
+For OpenClaw 3.23-2, the file used during this release was:
 
 ```text
 .../dist/model-selection-CU2b7bN6.js
