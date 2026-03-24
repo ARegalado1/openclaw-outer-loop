@@ -1,9 +1,31 @@
 import crypto from "node:crypto";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk";
 
 type OuterLoopPluginConfig = {
   enabled?: boolean;
   maxContinuations?: number;
+};
+
+type ChainLogIteration = {
+  n: number;
+  action: string;
+  enqueuedAt: number;
+  result: string;
+};
+
+type ChainLog = {
+  chainId: string;
+  sessionKey: string;
+  agentId: string;
+  startedAt: number;
+  endedAt?: number;
+  stopReason?: string;
+  totalTurns: number;
+  iterations: ChainLogIteration[];
+  errors: string[];
 };
 
 type SessionChainState = {
@@ -15,6 +37,7 @@ type SessionChainState = {
   lastEnqueueAt?: number;
   noProgressStreak: number;
   updatedAt: number;
+  startedAt: number;
 };
 
 type AgentOverrideState = {
@@ -25,10 +48,11 @@ type AgentOverrideState = {
 const chainStateBySessionKey = new Map<string, SessionChainState>();
 const agentOverrideByAgentId = new Map<string, AgentOverrideState>();
 const CHAIN_STATE_STALE_MS = 10 * 60 * 1000;
-const OUTER_LOOP_VERSION = "0.1.0";
+const OUTER_LOOP_VERSION = "0.1.1";
 const DEFAULT_MAX_CONTINUATIONS = 3;
 const MIN_MAX_CONTINUATIONS = 1;
-const MAX_MAX_CONTINUATIONS = 10;
+const MAX_MAX_CONTINUATIONS = 20;
+const CHAIN_LOG_DIR = path.join(os.homedir(), ".openclaw", "logs", "outer-loop");
 
 function normalizeAgentId(agentId: unknown): string {
   return typeof agentId === "string" ? agentId.trim() : "";
@@ -96,11 +120,13 @@ function inferNextAction(messages: unknown[]): string | null {
 }
 
 function buildContinuationPrompt(params: {
+  chainId: string;
   nextAction: string;
   continuationCount: number;
   recoveryMode: "none" | "post_compaction";
 }): string {
   return [
+    `[outer-loop:continuation chainId=${params.chainId} n=${params.continuationCount}]`,
     "Continue the current approved task.",
     "Reason: next step remains self-clearable.",
     `Next action: ${params.nextAction}`,
@@ -111,11 +137,13 @@ function buildContinuationPrompt(params: {
 }
 
 function createChainState(trigger?: string): SessionChainState {
+  const now = Date.now();
   return {
     chainId: crypto.randomUUID(),
     continuationCount: 0,
     noProgressStreak: 0,
-    updatedAt: Date.now(),
+    updatedAt: now,
+    startedAt: now,
     lastTrigger: trigger,
   };
 }
@@ -144,6 +172,71 @@ function touchChainState(sessionKey: string, state: SessionChainState): SessionC
 
 function clearChainState(sessionKey: string): void {
   chainStateBySessionKey.delete(sessionKey);
+}
+
+function chainLogPath(chainId: string): string {
+  return path.join(CHAIN_LOG_DIR, `${chainId}.json`);
+}
+
+function readChainLog(chainId: string): ChainLog | null {
+  try {
+    const raw = fs.readFileSync(chainLogPath(chainId), "utf8");
+    return JSON.parse(raw) as ChainLog;
+  } catch {
+    return null;
+  }
+}
+
+function writeChainLogFile(log: ChainLog): void {
+  try {
+    fs.mkdirSync(CHAIN_LOG_DIR, { recursive: true });
+    fs.writeFileSync(chainLogPath(log.chainId), JSON.stringify(log, null, 2), "utf8");
+  } catch (err) {
+    console.log("[outer-loop] chain log write error", { chainId: log.chainId, err: String(err) });
+  }
+}
+
+function appendChainLogIteration(
+  state: SessionChainState,
+  sessionKey: string,
+  agentId: string,
+  iteration: ChainLogIteration,
+): void {
+  const existing = readChainLog(state.chainId);
+  const log: ChainLog = existing ?? {
+    chainId: state.chainId,
+    sessionKey,
+    agentId,
+    startedAt: state.startedAt,
+    totalTurns: 0,
+    iterations: [],
+    errors: [],
+  };
+  log.iterations.push(iteration);
+  log.totalTurns = log.iterations.length;
+  writeChainLogFile(log);
+}
+
+function finalizeChainLog(
+  state: SessionChainState,
+  sessionKey: string,
+  agentId: string,
+  stopReason: string,
+): void {
+  const existing = readChainLog(state.chainId);
+  const log: ChainLog = existing ?? {
+    chainId: state.chainId,
+    sessionKey,
+    agentId,
+    startedAt: state.startedAt,
+    totalTurns: 0,
+    iterations: [],
+    errors: [],
+  };
+  log.endedAt = Date.now();
+  log.stopReason = stopReason;
+  log.totalTurns = log.iterations.length;
+  writeChainLogFile(log);
 }
 
 function formatStatus(pluginConfig: unknown, agentId: unknown, runtimeVisible: boolean): string {
@@ -187,7 +280,7 @@ export default {
     console.log("[outer-loop] ================================================");
     console.log(`[outer-loop] Outer Loop - Autonomous Looper v${OUTER_LOOP_VERSION}`);
     console.log(`[outer-loop] enabled=${enabled} maxContinuations=${maxContinuations}`);
-    console.log(`[outer-loop] runtime bridge visible=${Boolean(runtimeOuterLoopAtRegister)}`);
+    console.log(`[outer-loop] runtime bridge visible at register=${Boolean(runtimeOuterLoopAtRegister)}`);
     console.log("[outer-loop] ================================================");
 
     api.registerCommand({
@@ -200,7 +293,7 @@ export default {
         if (!command) {
           return {
             text: [
-              "Usage: /outerloop [status|on|off|max <1-10>]",
+              "Usage: /outerloop [status|on|off|max <1-20>]",
               "Examples:",
               "- /outerloop status",
               "- /outerloop on",
@@ -210,7 +303,10 @@ export default {
           };
         }
 
-        const agentId = ctx.config?.agent?.id;
+        const agentId = (ctx as any).agentId
+          ?? ctx.config?.agent?.id
+          ?? (ctx as any).agent?.id
+          ?? (ctx as any).session?.agentId;
         const runtimeVisible = Boolean((api as any)?.runtime?.outerLoop);
 
         if (command.kind === "status") {
@@ -267,8 +363,11 @@ export default {
           runtimeOuterLoopKeys: runtimeOuterLoopAtHook ? Object.keys(runtimeOuterLoopAtHook) : [],
           hasQueueSessionContinuation: Boolean(runtimeOuterLoopAtHook?.queueSessionContinuation),
         });
+        const hookAgentId = normalizeAgentId((ctx as any).agentId);
         if (!isEnabled((api as any).pluginConfig, (ctx as any).agentId)) return;
         if ((ctx as any).sessionKey == null || !(ctx as any).sessionKey.trim()) return;
+        // "memory" is a placeholder trigger value tolerated for continuation turns
+        // pending a dedicated internal trigger in a future OpenClaw release
         if ((ctx as any).trigger !== "user" && (ctx as any).trigger !== "memory") return;
 
         const sessionKey = (ctx as any).sessionKey.trim();
@@ -276,6 +375,7 @@ export default {
 
         if ((ctx as any).trigger === "user") {
           if (existingState) {
+            finalizeChainLog(existingState, sessionKey, hookAgentId, "interrupted_by_user");
             clearChainState(sessionKey);
           }
         } else if (!existingState) {
@@ -283,6 +383,9 @@ export default {
         }
 
         if ((event as any).success !== true) {
+          if (existingState && (ctx as any).trigger === "memory") {
+            finalizeChainLog(existingState, sessionKey, hookAgentId, "run_failed");
+          }
           clearChainState(sessionKey);
           return;
         }
@@ -290,6 +393,9 @@ export default {
         const maxContinuations = getMaxContinuations((api as any).pluginConfig, (ctx as any).agentId);
         const nextAction = inferNextAction(Array.isArray((event as any).messages) ? (event as any).messages : []);
         if (!nextAction) {
+          if (existingState && (ctx as any).trigger === "memory") {
+            finalizeChainLog(existingState, sessionKey, hookAgentId, "no_next_action");
+          }
           clearChainState(sessionKey);
           return;
         }
@@ -305,6 +411,7 @@ export default {
             state.noProgressStreak = 0;
           }
           if (state.noProgressStreak >= 1) {
+            finalizeChainLog(state, sessionKey, hookAgentId, "no_progress");
             clearChainState(sessionKey);
             return;
           }
@@ -318,6 +425,7 @@ export default {
 
         const nextContinuationCount = state.continuationCount + 1;
         if (nextContinuationCount > maxContinuations) {
+          finalizeChainLog(state, sessionKey, hookAgentId, "max_continuations_reached");
           clearChainState(sessionKey);
           return;
         }
@@ -336,6 +444,7 @@ export default {
           workspaceDir: (ctx as any).workspaceDir,
           messageProvider: (ctx as any).messageProvider,
           prompt: buildContinuationPrompt({
+            chainId: state.chainId,
             nextAction,
             continuationCount: nextContinuationCount,
             recoveryMode: "none",
@@ -353,8 +462,16 @@ export default {
 
         console.log("[outer-loop] queueSessionContinuation result", result);
 
+        appendChainLogIteration(state, sessionKey, hookAgentId, {
+          n: nextContinuationCount,
+          action: nextAction,
+          enqueuedAt: state.lastEnqueueAt,
+          result: result.ok ? "ok" : (result.reason ?? "error"),
+        });
+
         if (!result.ok) {
           if (result.reason !== "duplicate_pending") {
+            finalizeChainLog(state, sessionKey, hookAgentId, `enqueue_failed:${result.reason ?? "unknown"}`);
             clearChainState(sessionKey);
             return;
           }

@@ -16,7 +16,7 @@ Core commands:
 
 Max continuation bounds:
 - minimum: `1`
-- maximum: `10`
+- maximum: `20`
 - default: `3`
 
 What it does:
@@ -35,11 +35,18 @@ Fast install shape:
 
 ## Status
 
-**Version:** `v0.1.0`
+**Version:** `v0.1.1`
 
-`v0.1.0` is a working early release.
+## What's in v0.1.1
 
-What is included:
+- **Transcript/internal tagging** — continuation turn prompts are now prefixed with a machine-readable tag `[outer-loop:continuation chainId=<id> n=<count>]` so they are distinguishable from ordinary user messages in session history
+- **Per-chain run log** — each chain writes a JSON log to `~/.openclaw/logs/outer-loop/<chainId>.json` with chain ID, agent ID, session key, start/end time, per-iteration action/result, stop reason, and total turns
+- **Agent scope fix** — `/outerloop status` now correctly resolves and displays the actual agent ID instead of `unknown`
+- **Banner bridge-visible timing fix** — startup banner now labels the value `runtime bridge visible at register=` to clarify it is a register-time snapshot, not a guaranteed runtime state
+- **Max continuations ceiling raised** — upper limit raised from 10 to 20; default remains 3
+
+## What was in v0.1.0
+
 - live same-session continuation bridge
 - plugin-driven continuation policy
 - duplicate-pending protection
@@ -48,13 +55,11 @@ What is included:
 - startup banner and operator-facing command UX
 - live proof in a patched OpenClaw gateway
 
-What is **not** included yet:
-- transcript/internal tagging for continuation turns
+## What is **not** included yet
+
 - dedicated compaction-recovery logic
 - polished upstream integration into OpenClaw core
-
-Planned next release:
-- **`v0.1.1`**: transcript/internal tagging so continuation turns do not look like ordinary user messages in session history
+- dedicated internal trigger value for continuation turns (currently uses a tolerated placeholder)
 
 ## What this solves
 
@@ -68,21 +73,20 @@ This project adds a bounded outer loop:
 
 ## Architecture
 
-`v0.1.0` uses a deliberately narrow split:
+`v0.1.1` uses a deliberately narrow split:
 
 - **plugin policy layer**
   - decides whether to continue
   - tracks per-session chain state
   - applies no-progress and max-continuation guardrails
   - exposes live `/outerloop` controls
+  - writes per-chain JSON run logs
 
 - **runtime shim**
   - exposes same-session continuation enqueue to plugins
   - prevents duplicate pending continuations
   - respects real inbound interruption/preemption
   - re-enters the normal embedded agent/session flow
-
-This version is intentionally minimal. It proves the bridge first and leaves deeper product polish for follow-up releases.
 
 ## Current commands
 
@@ -96,7 +100,7 @@ The plugin supports live per-agent controls in chat:
 ### Max continuation bounds
 
 - minimum: `1`
-- maximum: `10`
+- maximum: `20`
 - default: `3`
 
 `maxContinuations` is the maximum number of **autonomous continuation turns** allowed after the original user-triggered turn.
@@ -106,7 +110,7 @@ Example:
 - agent finishes that turn
 - outer loop may enqueue up to `N` additional turns, where `N = maxContinuations`
 
-## Stop conditions in v0.1.0
+## Stop conditions
 
 The outer loop is intentionally conservative.
 
@@ -119,14 +123,55 @@ It stops when:
 
 This is designed to prefer stopping early over running away.
 
-## Known limitations in v0.1.0
+## Per-chain run logs
 
-- continuation transcript entries are not tagged yet, so session history may still represent them less clearly than desired
-- the runtime shim is currently implemented as a patch against the installed OpenClaw runtime, not as a fully upstreamed core extension
-- no dedicated compaction-recovery behavior has been added yet
-- continuation policy still relies on a conservative `Next action` extraction heuristic
-- current continuation trigger semantics rely on a tolerated placeholder runtime trigger value rather than a final dedicated continuation trigger
-- max continuations is capped at `10` for now; this is intentionally conservative for the first public release to avoid runaway behavior and surprise costs before transcript tagging and observability are more mature. If you need higher limits for heavy internal workflows, open an issue and share the use case.
+Each chain writes a JSON log file to:
+
+```
+~/.openclaw/logs/outer-loop/<chainId>.json
+```
+
+Log schema:
+
+```json
+{
+  "chainId": "...",
+  "sessionKey": "...",
+  "agentId": "...",
+  "startedAt": 1234567890000,
+  "endedAt": 1234567891500,
+  "stopReason": "max_continuations_reached",
+  "totalTurns": 3,
+  "iterations": [
+    { "n": 1, "action": "...", "enqueuedAt": 1234567890100, "result": "ok" },
+    { "n": 2, "action": "...", "enqueuedAt": 1234567890600, "result": "ok" },
+    { "n": 3, "action": "...", "enqueuedAt": 1234567891100, "result": "ok" }
+  ],
+  "errors": []
+}
+```
+
+Possible `stopReason` values:
+- `interrupted_by_user` — a real user message arrived and preempted the chain
+- `run_failed` — a continuation turn returned `success: false`
+- `no_next_action` — the agent's last message contained no recognizable next action
+- `no_progress` — same next action seen on two consecutive continuation turns
+- `max_continuations_reached` — chain hit the configured cap
+- `enqueue_failed:<reason>` — the runtime rejected the enqueue for a non-duplicate reason
+
+Chains interrupted by stale state expiry (10 min idle) do not produce a finalized log.
+
+## Transcript tagging
+
+Continuation turn prompts now begin with a machine-readable tag line:
+
+```
+[outer-loop:continuation chainId=<uuid> n=<count>]
+Continue the current approved task.
+...
+```
+
+This allows any downstream session history reader to distinguish outer-loop-injected turns from real user messages.
 
 ## Compatibility
 
@@ -184,7 +229,7 @@ Example plugin config:
 
 ## Runtime patch installation
 
-`v0.1.0` requires replacing one installed OpenClaw runtime bundle file with the patched version that exposes:
+`v0.1.1` requires replacing one installed OpenClaw runtime bundle file with the patched version that exposes:
 
 - `api.runtime.outerLoop.queueSessionContinuation(...)`
 - `api.runtime.outerLoop.markRealInboundSessionActivity(...)`
@@ -234,20 +279,20 @@ On successful startup, the plugin should log a banner like:
 
 ```text
 [outer-loop] ================================================
-[outer-loop] Outer Loop - Autonomous Looper v0.1.0
+[outer-loop] Outer Loop - Autonomous Looper v0.1.1
 [outer-loop] enabled=true maxContinuations=3
-[outer-loop] runtime bridge visible=true
+[outer-loop] runtime bridge visible at register=true
 [outer-loop] ================================================
 ```
 
-If `runtime bridge visible=false`, the plugin loaded but the runtime patch is not active yet.
+If `runtime bridge visible at register=false`, the plugin loaded but the runtime patch is not active yet. Note: this value is captured at plugin registration time. If the bridge becomes available later, `/outerloop status` (which checks at call time) will reflect the correct state.
 
 ## Operator experience
 
 The plugin logs a startup banner showing:
 - enabled state
 - current continuation cap
-- whether the patched runtime bridge is visible
+- whether the patched runtime bridge was visible at register time
 
 The plugin also supports live per-agent control commands in chat, without a gateway restart:
 - `/outerloop status`
@@ -255,11 +300,38 @@ The plugin also supports live per-agent control commands in chat, without a gate
 - `/outerloop off`
 - `/outerloop max <n>`
 
+`/outerloop status` checks bridge visibility at call time and is the reliable source of truth for current bridge state.
+
+## Publishing to ClawHub / community listing
+
+ClawHub (`clawhub` CLI) currently supports **skills**, not plugins. Plugin publishing uses a separate path.
+
+To get this plugin listed in the OpenClaw community plugins docs:
+
+1. Publish the plugin package to npm:
+   ```bash
+   npm publish --access public
+   ```
+   Package name: `@openclaw/outer-loop` (or your scoped name)
+
+2. Host source on a public GitHub repository with an issue tracker.
+
+3. Open a PR to the OpenClaw docs repository adding an entry to the community plugins page (`docs/plugins/community.md`) using the required format:
+
+   ```
+   - **Outer Loop** — Bounded same-session autonomous continuation for OpenClaw agents.
+     npm: `@openclaw/outer-loop`
+     repo: `https://github.com/<your-org>/openclaw-outer-loop`
+     install: `openclaw plugins install @openclaw/outer-loop`
+   ```
+
+4. The PR must satisfy the review bar: useful, documented, active maintainer, and safe to operate.
+
+Note: the runtime patch is a non-standard install step that may complicate listing until the bridge is upstreamed into OpenClaw core.
+
 ## Validation summary
 
-`v0.1.0` is not just theoretical.
-
-The project reached all of the following before release:
+`v0.1.0` reached all of the following before release:
 - mechanical bridge validation
 - focused plugin-file tests
 - modeled runtime-shim validation
@@ -284,26 +356,25 @@ Good use cases:
 Avoid or be cautious with:
 - customer-facing destructive actions
 - high-stakes tasks without observability
-- long autonomous chains before transcript tagging lands
+- long autonomous chains without reviewing run logs
+
+## Known limitations
+
+- the runtime shim is currently implemented as a patch against the installed OpenClaw runtime, not as a fully upstreamed core extension
+- no dedicated compaction-recovery behavior has been added yet
+- continuation policy still relies on a conservative `Next action` extraction heuristic
+- current continuation trigger semantics rely on a tolerated placeholder runtime trigger value (`"memory"`) rather than a final dedicated continuation trigger — this will change in a future release
+- chains interrupted by stale state expiry (10 min idle) do not produce a finalized log entry
+- ClawHub (skills registry) does not support plugin publishing; plugin listing requires npm + OpenClaw community docs PR
 
 ## Roadmap
 
-### v0.1.1
-- transcript/internal tagging for continuation turns
-- fix startup banner bridge-visible timing so it reflects resolved runtime state instead of register-time state
-- fix `/outerloop status` agent scope resolution so it reports the actual agent ID instead of `unknown`
-
 ### later
-- simpler installation UX, ideally moving toward a more fluid one-line or near-one-line install path once packaging/runtime integration is clean enough
+- dedicated internal trigger value for continuation turns (replace `"memory"` placeholder)
+- simpler installation UX, ideally toward a more fluid one-line install path once packaging/runtime integration is clean enough
 - better continuation semantics
 - improved compaction recovery if still needed after lossless context tooling
 - cleaner upstream packaging / PR path into OpenClaw core
-
-## Public release intent
-
-This repository publishes a working early release of the Outer Loop plugin + runtime patch for OpenClaw 3.13.
-
-It is meant for operators who are comfortable applying a targeted runtime patch and testing an experimental autonomy feature in internal workflows.
 
 ## License
 

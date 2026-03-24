@@ -1,6 +1,7 @@
 {
   "id": "outer-loop",
   "name": "Outer Loop",
+  "version": "0.1.1",
   "description": "Bounded same-session continuation policy plugin.",
   "configSchema": {
     "type": "object",
